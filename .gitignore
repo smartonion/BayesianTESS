@@ -205,3 +205,18 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# TESS light curve data
+dataset/lightcurves_raw/
+dataset/lightcurves_npz/
+
+# Debug documentation
+debug/
+
+# Individual scripts integrated into build_dataset.py
+scripts/make_tic_subset.py
+scripts/download_mast_lightcurves.py
+scripts/build_npz_from_fits.py
+scripts/backfill_subset.py
+scripts/ensure_complete_subset.py
+scripts/create_index.py
