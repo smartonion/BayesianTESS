@@ -213,6 +213,9 @@ dataset/lightcurves_npz/
 # Feature matrices and labels
 *.npy
 
+# Saved model checkpoints
+saved_models/
+
 # Debug documentation
 debug/
 
