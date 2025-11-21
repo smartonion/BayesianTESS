@@ -394,10 +394,6 @@ def create_index():
 
 
 def main():
-    """Main pipeline execution."""
-    print("="*60)
-    print("TESS Light Curve Dataset Builder")
-    print("="*60)
     
     # Create initial subset if needed
     create_initial_subset()
