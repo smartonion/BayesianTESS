@@ -210,6 +210,9 @@ __marimo__/
 dataset/lightcurves_raw/
 dataset/lightcurves_npz/
 
+# Feature matrices and labels
+*.npy
+
 # Debug documentation
 debug/
 
@@ -220,3 +223,10 @@ scripts/build_npz_from_fits.py
 scripts/backfill_subset.py
 scripts/ensure_complete_subset.py
 scripts/create_index.py
+
+# Example and test files
+models/example_usage.py
+test_gp_data.py
+
+# Notebooks
+notebooks/
