@@ -8,6 +8,10 @@ import numpy as np
 from pathlib import Path
 from sklearn.model_selection import StratifiedKFold
 from datetime import datetime
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import matplotlib.pyplot as plt
+from torch.utils.tensorboard import SummaryWriter
 
 
 def load_and_clean_data():
@@ -48,9 +52,8 @@ def load_and_clean_data():
     X_tensor = torch.from_numpy(X_clean).float()
     y_tensor = torch.from_numpy(y_clean).long()
     
-    # Normalize features (zero mean, unit variance)
     X_mean = X_tensor.mean(dim=0, keepdim=True)
-    X_std = X_tensor.std(dim=0, keepdim=True) + 1e-6  # Add small epsilon to avoid division by zero
+    X_std = X_tensor.std(dim=0, keepdim=True) + 1e-6
     X_normalized = (X_tensor - X_mean) / X_std
     
     return X_normalized, y_tensor
@@ -81,15 +84,12 @@ class VariationalGPModel(gpytorch.models.ApproximateGP):
             variational_distribution,
             learn_inducing_locations=True
         )
-        variational_strategy._jitter_val = 1e-4  # Add jitter for numerical stability
+        variational_strategy._jitter_val = 1e-4
         super(VariationalGPModel, self).__init__(variational_strategy)
         
-        # Mean function (constant)
         self.mean_module = gpytorch.means.ConstantMean()
-        
-        # Kernel (RBF wrapped in ScaleKernel)
         base_kernel = gpytorch.kernels.RBFKernel()
-        base_kernel.lengthscale = 1.0  # Initialize with reasonable lengthscale
+        base_kernel.lengthscale = 1.0
         self.covar_module = gpytorch.kernels.ScaleKernel(base_kernel)
     
     def forward(self, x):
@@ -111,7 +111,7 @@ class VariationalGPModel(gpytorch.models.ApproximateGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def train_single_fold(train_x, train_y, num_iterations=100, num_inducing=50, verbose=False):
+def train_single_fold(train_x, train_y, num_iterations=100, num_inducing=50, verbose=False, log_dir=None):
     """
     Train a GP model on a single fold of data.
     
@@ -127,6 +127,8 @@ def train_single_fold(train_x, train_y, num_iterations=100, num_inducing=50, ver
         Number of inducing points (default: 50)
     verbose : bool, optional
         Whether to print training progress (default: False)
+    log_dir : Path, optional
+        Directory to save logs, plots, and tensorboard files (default: None)
     
     Returns
     -------
@@ -148,6 +150,12 @@ def train_single_fold(train_x, train_y, num_iterations=100, num_inducing=50, ver
     
     mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=train_y.size(0))
     
+    train_losses = []
+    tensorboard_writer = None
+    if log_dir is not None:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        tensorboard_writer = SummaryWriter(log_dir=str(log_dir))
+    
     for i in range(num_iterations):
         optimizer.zero_grad()
         output = model(train_x)
@@ -155,8 +163,28 @@ def train_single_fold(train_x, train_y, num_iterations=100, num_inducing=50, ver
         loss.backward()
         optimizer.step()
         
+        loss_value = loss.item()
+        train_losses.append(loss_value)
+        
+        if tensorboard_writer is not None:
+            tensorboard_writer.add_scalar('Train/Loss', loss_value, i + 1)
+        
         if verbose and (i + 1) % 10 == 0:
-            print(f"  Iteration {i+1}/{num_iterations} - Loss: {loss.item():.4f}")
+            print(f"  Iteration {i+1}/{num_iterations} - Loss: {loss_value:.4f}")
+    
+    if log_dir is not None:
+        plt.figure(figsize=(10, 6))
+        plt.plot(train_losses, label='Train Loss', linewidth=2)
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.title('Training Loss')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig(log_dir / 'train_loss.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        if tensorboard_writer is not None:
+            tensorboard_writer.close()
     
     return model, likelihood
 
@@ -224,7 +252,6 @@ def train_baseline_gp(num_iterations=100, num_inducing=50, n_splits=5, random_st
     accuracies = []
     models = []
     
-    # Create date-based folder for this run
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_dir = Path("saved_models/baseline_gp") / timestamp
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -243,11 +270,14 @@ def train_baseline_gp(num_iterations=100, num_inducing=50, n_splits=5, random_st
         test_x = X_total[test_indices]
         test_y = y_total[test_indices]
         
+        fold_log_dir = model_dir / f"fold_{fold_idx}_logs"
+        
         model, likelihood = train_single_fold(
             train_x, train_y, 
             num_iterations=num_iterations, 
             num_inducing=num_inducing,
-            verbose=(fold_idx == 1)
+            verbose=(fold_idx == 1),
+            log_dir=fold_log_dir
         )
         
         accuracy = evaluate_model(model, likelihood, test_x, test_y)

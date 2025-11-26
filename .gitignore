@@ -48,6 +48,17 @@ coverage.xml
 *.cover
 *.py.cover
 .hypothesis/
+
+# Analysis reports and outputs
+reports/*.json
+reports/*_SUMMARY.md
+reports/*_COMPARISON.md
+reports/*_REQUIREMENTS*.md
+
+# Analysis scripts
+scripts/analyze_softdtw_gp_resources.py
+scripts/analyze_gak_resources.py
+scripts/estimate_full_training_specs.py
 .pytest_cache/
 cover/
 
@@ -194,13 +205,6 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
-.cursorignore
-.cursorindexingignore
-
 # Marimo
 marimo/_static/
 marimo/_lsp/
@@ -229,7 +233,22 @@ scripts/create_index.py
 
 # Example and test files
 models/example_usage.py
-test_gp_data.py
+
+# All test files
+test*.py
+*test*.py
+tests/
+test_plots/
+
+# SoftDTW fixed wrapper (superseded by V3)
+models/kernels/backend/soft_dtw_fixed.py
+
+# Experimental RBF kernel (Tier 3, not used in production)
+models/kernels/softdtw_feature_rbf_kernel.py
+
+# Legacy kernel versions (V3 is the current version)
+models/kernels/stable_softdtw_kernel.py
+models/kernels/stable_softdtw_kernel_v2.py
 
 # Notebooks
 notebooks/

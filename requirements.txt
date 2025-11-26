@@ -1,9 +1,25 @@
+# Core data science libraries
 pandas>=2.0.0
 numpy>=1.24.0
-astropy>=5.0.0
-astroquery>=0.4.6
 scipy>=1.10.0
+
+# Machine learning and GP
 torch>=2.0.0
 gpytorch>=1.10.0
 scikit-learn>=1.3.0
+
+# Time series and DTW
+tslearn>=0.6.0
+numba>=0.60.0  # Required for SoftDTW CUDA backend
+
+# Astronomy data
+astropy>=5.0.0
+astroquery>=0.4.6
+
+# Visualization and logging
+matplotlib>=3.5.0
+tensorboard>=2.10.0
+
+# Note: pysdtw was attempted but had issues (negative distances, no discrimination)
+# Now using local SoftDTW implementation from pytorch-softdtw-cuda (included in models/kernels/backend/)
 
