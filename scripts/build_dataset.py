@@ -1,5 +1,5 @@
 """
-1. Creates/updates TIC subset (60 CP, 90 FP/FA stars)
+1. Creates/updates TIC subset (configurable CP/FP counts, or use full dataset)
 2. Downloads SPOC light curve FITS files from MAST
 3. Converts FITS files to compressed NPZ format
 4. Automatically backfills stars without SPOC data
@@ -16,11 +16,10 @@ from pathlib import Path
 import glob
 import random
 import os
+import argparse
 
 # Configuration
 RANDOM_SEED = 42
-TARGET_CP = 60
-TARGET_FP = 90
 MAX_ITERATIONS = 10
 
 # Paths
@@ -34,42 +33,55 @@ random.seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
 
 
-def create_initial_subset():
+def create_initial_subset(target_cp=None, target_fp=None, use_full=False):
     """Create initial subset of TICs if it doesn't exist."""
-    if Path(SUBSET_FILE).exists():
+    if Path(SUBSET_FILE).exists() and not use_full:
         print(f"Subset file {SUBSET_FILE} already exists, skipping creation")
-        return
+        subset_df = pd.read_csv(SUBSET_FILE)
+        return len(subset_df[subset_df['label'] == 1]), len(subset_df[subset_df['label'] == 0])
     
-    print(f"Creating initial subset from {FULL_DATASET}...")
     df = pd.read_csv(FULL_DATASET)
-    
     cp_stars = df[df['label'] == 1]
     fp_stars = df[df['label'] == 0]
     
-    n_pos = min(TARGET_CP, len(cp_stars))
-    n_neg = min(TARGET_FP, len(fp_stars))
+    if use_full:
+        print(f"Using full dataset from {FULL_DATASET}...")
+        subset = df.copy()
+    else:
+        print(f"Creating initial subset from {FULL_DATASET}...")
+        if target_cp is None:
+            target_cp = 60
+        if target_fp is None:
+            target_fp = 90
+        
+        n_pos = min(target_cp, len(cp_stars))
+        n_neg = min(target_fp, len(fp_stars))
+        
+        if len(cp_stars) < target_cp:
+            print(f"Warning: Only {len(cp_stars)} CP stars available, requested {target_cp}")
+        if len(fp_stars) < target_fp:
+            print(f"Warning: Only {len(fp_stars)} FP/FA stars available, requested {target_fp}")
+        
+        cp_sample = cp_stars.sample(n=n_pos, random_state=RANDOM_SEED)
+        fp_sample = fp_stars.sample(n=n_neg, random_state=RANDOM_SEED)
+        
+        subset = pd.concat([cp_sample, fp_sample], ignore_index=True)
     
-    if len(cp_stars) < TARGET_CP:
-        print(f"Warning: Only {len(cp_stars)} CP stars available, requested {TARGET_CP}")
-    if len(fp_stars) < TARGET_FP:
-        print(f"Warning: Only {len(fp_stars)} FP/FA stars available, requested {TARGET_FP}")
-    
-    cp_sample = cp_stars.sample(n=n_pos, random_state=RANDOM_SEED)
-    fp_sample = fp_stars.sample(n=n_neg, random_state=RANDOM_SEED)
-    
-    subset = pd.concat([cp_sample, fp_sample], ignore_index=True)
     subset = subset.sample(frac=1, random_state=RANDOM_SEED).reset_index(drop=True)
-    
     subset.to_csv(SUBSET_FILE, index=False)
     print(f"Created {SUBSET_FILE} with {len(subset)} stars")
     print(f"  - Label 1 (CP): {len(subset[subset['label'] == 1])}")
     print(f"  - Label 0 (FP/FA): {len(subset[subset['label'] == 0])}")
+    
+    return len(subset[subset['label'] == 1]), len(subset[subset['label'] == 0])
 
 
-def download_fits_files():
+def download_fits_files(dry_run=False):
     """Download SPOC light curve FITS files from MAST."""
     print(f"\n{'='*60}")
     print("STEP 1: Downloading FITS files from MAST")
+    if dry_run:
+        print("  [DRY RUN MODE - No files will be downloaded]")
     print(f"{'='*60}")
     
     df = pd.read_csv(SUBSET_FILE)
@@ -91,6 +103,11 @@ def download_fits_files():
         if len(existing_files) > 0:
             print(f"  Already have {len(existing_files)} FITS file(s), skipping")
             skipped += 1
+            continue
+        
+        if dry_run:
+            print(f"  [DRY RUN] Would download FITS files for TIC {tic_id}")
+            downloaded += 1
             continue
         
         try:
@@ -148,10 +165,12 @@ def download_fits_files():
     print(f"  Failed/no data: {failed}")
 
 
-def convert_fits_to_npz():
+def convert_fits_to_npz(dry_run=False):
     """Convert FITS files to compressed NPZ format."""
     print(f"\n{'='*60}")
     print("STEP 2: Converting FITS to NPZ format")
+    if dry_run:
+        print("  [DRY RUN MODE - No files will be converted]")
     print(f"{'='*60}")
     
     df = pd.read_csv(SUBSET_FILE)
@@ -169,6 +188,17 @@ def convert_fits_to_npz():
         if npz_file.exists():
             print(f"TIC {tic_id}: NPZ file already exists, skipping")
             skipped += 1
+            continue
+        
+        if dry_run:
+            pattern = str(FITS_DIR / "**" / f"*{tic_id_str}*_lc.fits")
+            fits_files = glob.glob(pattern, recursive=True)
+            if len(fits_files) > 0:
+                print(f"TIC {tic_id}: [DRY RUN] Would convert {len(fits_files)} FITS file(s)")
+                converted += 1
+            else:
+                print(f"TIC {tic_id}: [DRY RUN] No FITS files found")
+                failed += 1
             continue
         
         pattern = str(FITS_DIR / "**" / f"*{tic_id_str}*_lc.fits")
@@ -280,7 +310,7 @@ def convert_fits_to_npz():
     print(f"  Failed/no data: {failed}")
 
 
-def check_status():
+def check_status(target_cp=None, target_fp=None):
     """Check current status and return counts."""
     subset_df = pd.read_csv(SUBSET_FILE)
     npz_files = list(NPZ_DIR.glob('tic_*.npz'))
@@ -289,10 +319,15 @@ def check_status():
     cp_with_npz = len(subset_df[(subset_df['label'] == 1) & (subset_df['tic_id'].isin(npz_tic_ids))])
     fp_with_npz = len(subset_df[(subset_df['label'] == 0) & (subset_df['tic_id'].isin(npz_tic_ids))])
     
-    return cp_with_npz, fp_with_npz, npz_tic_ids
+    if target_cp is None:
+        target_cp = len(subset_df[subset_df['label'] == 1])
+    if target_fp is None:
+        target_fp = len(subset_df[subset_df['label'] == 0])
+    
+    return cp_with_npz, fp_with_npz, npz_tic_ids, target_cp, target_fp
 
 
-def backfill_subset(iteration=0):
+def backfill_subset(iteration=0, target_cp=None, target_fp=None):
     """Replace stars without SPOC data with new random selections."""
     print(f"\n{'='*60}")
     print(f"STEP 3: Backfilling subset (iteration {iteration + 1})")
@@ -300,15 +335,13 @@ def backfill_subset(iteration=0):
     
     full_df = pd.read_csv(FULL_DATASET)
     subset_df = pd.read_csv(SUBSET_FILE)
-    npz_tic_ids = check_status()[2]
-    
-    current_cp, current_fp, _ = check_status()
+    current_cp, current_fp, npz_tic_ids, target_cp, target_fp = check_status(target_cp, target_fp)
     
     print(f"Current status:")
-    print(f"  CP with NPZ: {current_cp} / {TARGET_CP}")
-    print(f"  FP/FA with NPZ: {current_fp} / {TARGET_FP}")
+    print(f"  CP with NPZ: {current_cp} / {target_cp}")
+    print(f"  FP/FA with NPZ: {current_fp} / {target_fp}")
     
-    if current_cp >= TARGET_CP and current_fp >= TARGET_FP:
+    if current_cp >= target_cp and current_fp >= target_fp:
         print("Target already reached!")
         return True
     
@@ -318,8 +351,8 @@ def backfill_subset(iteration=0):
     cp_pool = full_df[(full_df['label'] == 1) & (~full_df['tic_id'].isin(subset_tic_ids))]
     fp_pool = full_df[(full_df['label'] == 0) & (~full_df['tic_id'].isin(subset_tic_ids))]
     
-    new_cp_needed = max(0, TARGET_CP - current_cp)
-    new_fp_needed = max(0, TARGET_FP - current_fp)
+    new_cp_needed = max(0, target_cp - current_cp)
+    new_fp_needed = max(0, target_fp - current_fp)
     
     print(f"\nNeed to add:")
     print(f"  CP: {new_cp_needed}")
@@ -351,7 +384,7 @@ def backfill_subset(iteration=0):
         valid_subset = valid_subset.sample(frac=1, random_state=RANDOM_SEED).reset_index(drop=True)
         valid_subset.to_csv(SUBSET_FILE, index=False)
         print(f"\nCleaned up subset (removed {len(missing_tic_ids)} stars without NPZ files)")
-        return current_cp >= TARGET_CP and current_fp >= TARGET_FP
+        return current_cp >= target_cp and current_fp >= target_fp
 
 
 def create_index():
@@ -394,9 +427,49 @@ def create_index():
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description='Build TESS light curve dataset with automatic backfilling',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        '--target_cp',
+        type=int,
+        default=None,
+        help='Target number of CP stars (default: 60 for subset, all for full dataset)'
+    )
+    parser.add_argument(
+        '--target_fp',
+        type=int,
+        default=None,
+        help='Target number of FP/FA stars (default: 90 for subset, all for full dataset)'
+    )
+    parser.add_argument(
+        '--use_full',
+        action='store_true',
+        help='Use full dataset instead of creating a subset'
+    )
+    parser.add_argument(
+        '--dry_run',
+        action='store_true',
+        help='Dry run mode: show what would be done without downloading/converting files'
+    )
+    
+    args = parser.parse_args()
     
     # Create initial subset if needed
-    create_initial_subset()
+    actual_cp, actual_fp = create_initial_subset(
+        target_cp=args.target_cp,
+        target_fp=args.target_fp,
+        use_full=args.use_full
+    )
+    
+    # Set targets based on arguments or defaults
+    if args.use_full:
+        target_cp = actual_cp
+        target_fp = actual_fp
+    else:
+        target_cp = args.target_cp if args.target_cp is not None else 60
+        target_fp = args.target_fp if args.target_fp is not None else 90
     
     # Iterative pipeline until targets are met
     for iteration in range(MAX_ITERATIONS):
@@ -405,19 +478,19 @@ def main():
         print(f"{'#'*60}")
         
         # Download FITS files
-        download_fits_files()
+        download_fits_files(dry_run=args.dry_run)
         
         # Convert to NPZ
-        convert_fits_to_npz()
+        convert_fits_to_npz(dry_run=args.dry_run)
         
         # Check status and backfill if needed
-        current_cp, current_fp, _ = check_status()
+        current_cp, current_fp, _, _, _ = check_status(target_cp, target_fp)
         
-        if current_cp >= TARGET_CP and current_fp >= TARGET_FP:
+        if current_cp >= target_cp and current_fp >= target_fp:
             print(f"\n[SUCCESS] Target reached: {current_cp} CP, {current_fp} FP/FA")
             break
         
-        if not backfill_subset(iteration):
+        if not backfill_subset(iteration, target_cp, target_fp):
             print(f"\nContinuing to next iteration...")
             continue
         else:
@@ -427,15 +500,15 @@ def main():
     create_index()
     
     # Final status
-    current_cp, current_fp, _ = check_status()
+    current_cp, current_fp, _, _, _ = check_status(target_cp, target_fp)
     print(f"\n{'='*60}")
     print("FINAL STATUS")
     print(f"{'='*60}")
-    print(f"CP: {current_cp} / {TARGET_CP}")
-    print(f"FP/FA: {current_fp} / {TARGET_FP}")
+    print(f"CP: {current_cp} / {target_cp}")
+    print(f"FP/FA: {current_fp} / {target_fp}")
     print(f"Total with NPZ: {current_cp + current_fp}")
     
-    if current_cp >= TARGET_CP and current_fp >= TARGET_FP:
+    if current_cp >= target_cp and current_fp >= target_fp:
         print("\n[SUCCESS] Successfully completed dataset building!")
     else:
         print(f"\n[WARNING] Could not reach target after {MAX_ITERATIONS} iterations")
